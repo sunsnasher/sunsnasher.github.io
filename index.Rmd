@@ -1,0 +1,174 @@
+---
+title: "Course Project"
+author: "YC"
+date: "2024-06-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+This project aims to predict the "classe" variable using machine learning techniques on the provided dataset. Key steps include:
+
+1. Data Preprocessing & Feature Selection:
+    - Splitting the data into training and testing sets.
+    - Remove unnecessary variables (such as those with too many NAs).
+
+2. Model Training:
+    - Training and visualizing a Decision Tree model with rpart (with 10-fold cross-validation).
+    - Training a Random Forest model using 10-fold cross-validation with the caret package.
+
+3. Out-of-Sample Error Estimation:
+    - The superior Random Forests model achieve an out-of-sample error rate of only 0.71%. (99.29% accuracy)
+
+4. Results & Conclusion:
+    - Emphasizing the effectiveness of the superior performance of Random Forests in predicting the "classe" variable.
+
+## Prepare Data and Packages
+```{r, results='hide', message = FALSE, warning = FALSE}
+library(tidyverse)
+library(randomForest)
+library(caret)
+library(parallel)
+library(doParallel)
+library(rpart.plot)
+
+url1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(url1, destfile = "./data/training.csv")
+download.file(url2, destfile = "./data/testing.csv")
+
+training <- read_csv("./data/training.csv")
+testing <- read_csv("./data/testing.csv")
+```
+
+## Exploratory Data Analysis
+
+According to the research paper, there are 5 different fashions of performing Unilateral Dumbbell Biceps Curl:
+
+- Class A: exactly according to the specification
+- Class B: throwing the elbows to the front
+- Class C: lifting the dumbbell only halfway
+- Class D: lowering the dumbbell only halfway
+- Class E: throwing the hips to the front
+
+These are recorded in the `classe` variable in the given data set, which is the outcome variable in this course project.
+
+```{r}
+ggplot(training, aes(x = training$classe)) +
+    geom_bar()
+```
+
+|   A  |   B  |   C  |   D  |   E  |
+|:----:|:----:|:----:|:----:|:----:|
+| 5580 | 3797 | 3422 | 3216 | 3607 |
+
+Out of 19622 observations in the training set, 5580 of them (28%) are Class A, which corresponds to the specified execution of the exercise.
+
+## Feature Selection & Data Processing
+
+In this step, I will:
+
+(1) remove variables that have a large amount of missing values.
+(2) remove variables that are individual-specific: `...1`, `user_name`, `raw_timestamp_part_1`, `raw_timestamp_part_2`, `cvtd_timestamp`, `new_window`, and `num_window`.
+(3) remove near zero variance variables, which are not useful for prediction.
+(4) turn the output variable `classe` into a factor variable.
+
+```{r, message = FALSE, warning = FALSE}
+na_percentage <- colSums(is.na(training)) / nrow(training)
+training_r <- training %>% 
+    select(which(na_percentage<0.5)) %>% #(1)
+    select(-c(1:7)) #(2) 
+
+nzv <- nearZeroVar(training_r)
+training_r <- training_r %>%
+    select(-nzv) #(3)
+
+training_r$classe <- as.factor(training$classe) #(4)
+```
+
+## Create training set and testing set
+```{r}
+set.seed(24)
+index_train <- createDataPartition(training_r$classe, p = 0.7, list = F) 
+train_data <- training_r[index_train,]
+test_data <- training_r[-index_train,]
+```
+
+In this project, I employ two kinds of model. The first is *Decision Trees*, and then the more sophisticated *Random Forest*
+
+## Decision Trees
+
+#### Step 1: Configure Cross-validation & Fit the model
+```{r, cache=TRUE}
+set.seed(357)
+fitControl_dt <- trainControl(method = "cv", number = 10)
+dtModel <- train(classe ~ ., data = train_data, method = "rpart", 
+                 trControl = fitControl_dt, 
+                 tuneGrid = data.frame(cp = seq(0.01, 0.1, 0.01)))
+```
+I use a 10-fold cross validation here. Cross validation is used to estimate the out of sample error rate. By holding out a part of the training data for validation in each iteration, cross-validation provides a robust estimate of the model's ability to generalize to new, unseen data. The average validation error across all folds provides a more stable and reliable estimate of the out-of-sample error rate than a single train-test split.
+
+#### Step 2: Visualize the model
+```{r}
+rpart.plot(dtModel$finalModel)
+```
+
+#### Step 3 Predict on the test set
+```{r}
+set.seed(11)
+prediction1 <- predict(dtModel, test_data)
+confusionMatrix(prediction1, test_data$classe)
+```
+The result accuracy is 74%, which corresponds to an out-of-sample error rate of 26%.
+
+
+## Random Forest
+
+#### Step 1: Configure Cross-validation and parallel processing
+```{r}
+set.seed(246)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl_rf <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
+```
+Again, I use a 10-fold cross validation here. Cross validation is used to estimate the out of sample error rate. By holding out a part of the training data for validation in each iteration, cross-validation provides a robust estimate of the model's ability to generalize to new, unseen data. The average validation error across all folds provides a more stable and reliable estimate of the out-of-sample error rate than a single train-test split.
+
+In addition, to speed up processing time, I utilize parallel processing as instructed by course mentor Len Greski. See here: <https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md>
+
+
+#### Step 2: Develop a random forest model
+```{r, cache=TRUE}
+set.seed(22)
+rfModel <- train(classe ~ ., data = train_data, method = "rf", trControl = fitControl_rf, ntree = 100)
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+#### Step 3: Examine model summary and cross-validation results
+```{r}
+print(rfModel)
+print(rfModel$resample)
+```
+
+#### Step 4: Predict on the test set
+```{r}
+prediction2 <- predict(rfModel, test_data)
+confusionMatrix(prediction2, test_data$classe)
+```
+*The accuracy of the Random Forest model is an excellent 99.29%.*
+
+## Results - Out of sample error
+The random forest model performed exceptionally well. When applied to the test dataset, which was not used during the model building process, the model accurately predicted 99.29% of the cases, misclassifying only 42 out of 5,885 observations. Out-of-sample error rate is only 0.71%.
+
+
+## Predict on the original test set. (20 observations)
+```{r}
+predict(rfModel, newdata = testing)
+```
+
+
+
+

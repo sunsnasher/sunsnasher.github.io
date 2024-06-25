@@ -168,7 +168,7 @@ The random forest model performed exceptionally well. When applied to the test d
 ```{r}
 predict(rfModel, newdata = testing)
 ```
-
+The accuracy is 100% in predicting the 20 unknown test cases.
 
 
 
